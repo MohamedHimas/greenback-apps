@@ -47,7 +47,7 @@
       "shortcutName": "Greenback Terminal",
       "deleteAppDataOnUninstall": false
     },
-    "electronDist": "node_modules/electron/dist",
+    "electronDist": "electron-zip",
     "electronVersion": "44.9.2"
   }
 }

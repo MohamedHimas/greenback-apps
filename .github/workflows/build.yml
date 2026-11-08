@@ -49,59 +49,31 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-      - name: Remember downloaded build tools
-        uses: actions/cache@v4
-        with:
-          path: ~\AppData\Local\electron-builder\Cache
-          key: electron-builder-tools-v1
-      - name: Prepare Windows build tools (retries if GitHub is busy)
-        shell: bash
+      - name: Build small Windows app (Edge WebView2)
+        shell: pwsh
+        working-directory: windows-lite
         run: |
-          DIR="$(cygpath -u "$LOCALAPPDATA")/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0"
-          if [ -f "$DIR/windows-10/x64/signtool.exe" ]; then echo "Already prepared"; exit 0; fi
-          mkdir -p "$DIR"
-          for i in 1 2 3 4 5 6 7 8; do
-            for URL in https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-2.6.0/winCodeSign-2.6.0.7z https://npmmirror.com/mirrors/electron-builder-binaries/winCodeSign-2.6.0/winCodeSign-2.6.0.7z; do
-              curl -fSL --retry 3 --retry-all-errors --retry-delay 5 -m 300 -o wcs.7z "$URL" && 7z x wcs.7z "-o$(cygpath -w "$DIR")" -y "-xr!darwin" && exit 0
-              echo "Download failed from $URL"
-            done
-            echo "Trying again in 30s ($i)"; sleep 30
-          done
-          echo "Could not prepare tools - the build step will try another way"
-      - name: Download Electron (retries if GitHub is busy)
-        shell: bash
-        working-directory: windows
-        run: |
-          mkdir -p electron-zip
-          Z=electron-v44.9.2-win32-x64.zip
-          for i in 1 2 3 4 5 6 7 8; do
-            for URL in https://github.com/electron/electron/releases/download/v44.9.2/$Z https://npmmirror.com/mirrors/electron/44.9.2/$Z; do
-              curl -fSL --retry 3 --retry-all-errors --retry-delay 5 -m 600 -o "electron-zip/$Z" "$URL" && 7z t "electron-zip/$Z" > /dev/null && exit 0
-              echo "Download failed from $URL"
-            done
-            echo "Trying again in 30s ($i)"; sleep 30
-          done
-          exit 1
-      - name: Build installer
-        working-directory: windows
-        shell: bash
-        run: |
-          set +e
-          npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
-          for i in 1 2 3 4 5; do npm ci --no-audit --no-fund && break; echo "npm failed, trying again ($i)"; [ $i = 2 ] && export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/; sleep 30; [ $i = 5 ] && exit 1; done
-          for i in 1 2 3 4; do npx electron-builder --win nsis --publish never && exit 0; echo "Build failed, trying again in 30s ($i)"; sleep 30; done
-          echo "Trying the download mirror"
-          export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
-          npx electron-builder --win nsis --publish never && exit 0
-          echo "Last try: build without editing the program file"
-          npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false || exit 1
+          $v = "${{ inputs.version }}"
+          New-Item -ItemType Directory -Force payload | Out-Null
+          dotnet build -c Release -p:Version=$v
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $bin = "bin"
+          foreach ($n in @("Microsoft.Web.WebView2.Core.dll","Microsoft.Web.WebView2.WinForms.dll")) { Get-ChildItem $bin -Recurse -Filter $n | Select-Object -First 1 | Copy-Item -Destination payload -Force }
+          $loader = Get-ChildItem $bin -Recurse -Filter WebView2Loader.dll | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+          if (-not $loader) { $loader = Get-ChildItem $env:USERPROFILE\.nuget\packages\microsoft.web.webview2 -Recurse -Filter WebView2Loader.dll | Where-Object { $_.FullName -match "win-x64" } | Select-Object -First 1 }
+          Copy-Item $loader.FullName payload -Force
+          Get-ChildItem payload
+          if ((Get-ChildItem payload).Count -lt 3) { Write-Error "WebView2 files missing"; exit 1 }
+          dotnet build -c Release -p:Version=$v --no-incremental
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $exe = Get-ChildItem $bin -Recurse -Filter GreenbackTerminal.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          New-Item -ItemType Directory -Force ..\out | Out-Null
+          Copy-Item $exe.FullName ..\out\GreenbackTerminal-Setup.exe
+          Get-Item ..\out\GreenbackTerminal-Setup.exe | Format-List Name,Length
       - uses: actions/upload-artifact@v5
         with:
           name: windows
-          path: windows/dist/GreenbackTerminal-Setup.exe
+          path: out/GreenbackTerminal-Setup.exe
 
   release:
     needs: [android, windows]

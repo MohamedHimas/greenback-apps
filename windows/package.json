@@ -1,0 +1,35 @@
+{
+  "name": "greenback-terminal",
+  "productName": "Greenback Terminal",
+  "version": "1.0.0",
+  "description": "Greenback Terminal for Windows",
+  "author": "Greenback Terminal",
+  "homepage": "https://greenbackterminal.com",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.9.2",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.greenbackterminal.desktop",
+    "productName": "Greenback Terminal",
+    "artifactName": "GreenbackTerminal-Setup.${ext}",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "offline.html", "build/icon.png"],
+    "protocols": [{ "name": "Greenback Terminal", "schemes": ["greenbackterminal"] }],
+    "win": { "target": "nsis", "icon": "build/icon.ico" },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Greenback Terminal",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

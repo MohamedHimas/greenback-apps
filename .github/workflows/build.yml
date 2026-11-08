@@ -75,14 +75,15 @@ jobs:
         working-directory: windows
         shell: bash
         run: |
+          set +e
           npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
-          for i in 1 2 3 4 5; do npm ci --no-audit --no-fund && break; echo "npm failed, trying again ($i)"; sleep 30; [ $i = 5 ] && exit 1; done
+          for i in 1 2 3 4 5; do npm ci --no-audit --no-fund && break; echo "npm failed, trying again ($i)"; [ $i = 2 ] && export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/; sleep 30; [ $i = 5 ] && exit 1; done
           for i in 1 2 3 4; do npx electron-builder --win nsis --publish never && exit 0; echo "Build failed, trying again in 30s ($i)"; sleep 30; done
           echo "Trying the download mirror"
           export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
           npx electron-builder --win nsis --publish never && exit 0
           echo "Last try: build without editing the program file"
-          npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
+          npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false || exit 1
       - uses: actions/upload-artifact@v5
         with:
           name: windows

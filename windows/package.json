@@ -19,10 +19,26 @@
     "appId": "com.greenbackterminal.desktop",
     "productName": "Greenback Terminal",
     "artifactName": "GreenbackTerminal-Setup.${ext}",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "offline.html", "build/icon.png"],
-    "protocols": [{ "name": "Greenback Terminal", "schemes": ["greenbackterminal"] }],
-    "win": { "target": "nsis", "icon": "build/icon.ico" },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "offline.html",
+      "build/icon.png"
+    ],
+    "protocols": [
+      {
+        "name": "Greenback Terminal",
+        "schemes": [
+          "greenbackterminal"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
@@ -30,6 +46,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Greenback Terminal",
       "deleteAppDataOnUninstall": false
-    }
+    },
+    "electronDist": "node_modules/electron/dist",
+    "electronVersion": "44.9.2"
   }
 }

@@ -71,6 +71,20 @@ jobs:
             echo "Trying again in 30s ($i)"; sleep 30
           done
           echo "Could not prepare tools - the build step will try another way"
+      - name: Download Electron (retries if GitHub is busy)
+        shell: bash
+        working-directory: windows
+        run: |
+          mkdir -p electron-zip
+          Z=electron-v44.9.2-win32-x64.zip
+          for i in 1 2 3 4 5 6 7 8; do
+            for URL in https://github.com/electron/electron/releases/download/v44.9.2/$Z https://npmmirror.com/mirrors/electron/44.9.2/$Z; do
+              curl -fSL --retry 3 --retry-all-errors --retry-delay 5 -m 600 -o "electron-zip/$Z" "$URL" && 7z t "electron-zip/$Z" > /dev/null && exit 0
+              echo "Download failed from $URL"
+            done
+            echo "Trying again in 30s ($i)"; sleep 30
+          done
+          exit 1
       - name: Build installer
         working-directory: windows
         shell: bash

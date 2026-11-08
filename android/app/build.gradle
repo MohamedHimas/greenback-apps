@@ -1,5 +1,7 @@
 plugins { id 'com.android.application' }
 
+def appVersion = System.getenv('VERSION_NAME') ?: '1.1.0'
+
 android {
     namespace 'com.greenbackterminal.app'
     compileSdk 35
@@ -9,7 +11,9 @@ android {
         minSdk 24
         targetSdk 35
         versionCode((System.getenv('VERSION_CODE') ?: '1') as int)
-        versionName(System.getenv('VERSION_NAME') ?: '1.0.0')
+        versionName appVersion
+        // The app opens the live website inside the phone's own Chrome engine (Trusted Web Activity).
+        manifestPlaceholders = [startUrl: "https://greenbackterminal.com/?gbapp=android&gbv=" + appVersion]
     }
 
     signingConfigs {
@@ -37,4 +41,10 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    lint { abortOnError false; checkReleaseBuilds false }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
 }

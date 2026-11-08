@@ -52,13 +52,23 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+      - name: Prepare Windows build tools
+        shell: pwsh
+        run: |
+          $dir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-2.6.0/winCodeSign-2.6.0.7z" -OutFile "$env:RUNNER_TEMP\wcs.7z" -MaximumRetryCount 5 -RetryIntervalSec 10
+          7z x "$env:RUNNER_TEMP\wcs.7z" "-o$dir" -y "-xr!darwin"
+          exit 0
       - name: Build installer
         working-directory: windows
         shell: bash
         run: |
           npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
           for i in 1 2 3; do npm ci --no-audit --no-fund && break; echo "npm failed, trying again ($i)"; sleep 20; [ $i = 3 ] && exit 1; done
-          for i in 1 2 3 4; do npx electron-builder --win nsis --publish never && break; echo "Build failed, trying again ($i)"; sleep 30; [ $i = 4 ] && exit 1; done
+          for i in 1 2 3; do npx electron-builder --win nsis --publish never && exit 0; echo "Build failed, trying again ($i)"; sleep 20; done
+          echo "Last try: build without editing the program file"
+          npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
       - uses: actions/upload-artifact@v5
         with:
           name: windows

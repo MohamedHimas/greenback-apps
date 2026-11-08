@@ -15,14 +15,19 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
+      - name: Download Gradle (retries if the server is busy)
+        run: |
+          for i in 1 2 3 4 5 6; do
+            curl -fSL --retry 5 --retry-all-errors --retry-delay 10 -o "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-8.10.2-bin.zip && break
+            echo "Download failed, trying again in 20s ($i)"; sleep 20
+          done
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.10.2/bin" >> "$GITHUB_PATH"
       - name: Prepare signing key
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
       - name: Build APK
@@ -33,9 +38,9 @@ jobs:
           VERSION_NAME: ${{ inputs.version }}
           VERSION_CODE: ${{ github.run_number }}
         run: |
-          gradle assembleRelease --no-daemon
+          for i in 1 2 3; do gradle assembleRelease --no-daemon && break; echo "Build failed, trying again ($i)"; sleep 20; [ $i = 3 ] && exit 1; done
           cp app/build/outputs/apk/release/app-release.apk ../GreenbackTerminal.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: android
           path: GreenbackTerminal.apk
@@ -43,18 +48,18 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Build installer
         working-directory: windows
         shell: bash
         run: |
           npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
-          npm ci --no-audit --no-fund
-          npx electron-builder --win nsis --publish never
-      - uses: actions/upload-artifact@v4
+          for i in 1 2 3; do npm ci --no-audit --no-fund && break; echo "npm failed, trying again ($i)"; sleep 20; [ $i = 3 ] && exit 1; done
+          for i in 1 2 3 4; do npx electron-builder --win nsis --publish never && break; echo "Build failed, trying again ($i)"; sleep 30; [ $i = 4 ] && exit 1; done
+      - uses: actions/upload-artifact@v5
         with:
           name: windows
           path: windows/dist/GreenbackTerminal-Setup.exe
@@ -63,7 +68,7 @@ jobs:
     needs: [android, windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: out
           merge-multiple: true

@@ -1,6 +1,6 @@
 plugins { id 'com.android.application' }
 
-def appVersion = System.getenv('VERSION_NAME') ?: '1.1.0'
+def appVersion = System.getenv('VERSION_NAME') ?: '2.0.0'
 
 android {
     namespace 'com.greenbackterminal.app'
@@ -10,10 +10,10 @@ android {
         applicationId 'com.greenbackterminal.app'
         minSdk 24
         targetSdk 35
-        versionCode((System.getenv('VERSION_CODE') ?: '1') as int)
+        versionCode((System.getenv('VERSION_CODE') ?: '100') as int)
         versionName appVersion
-        // The app opens the live website inside the phone's own Chrome engine (Trusted Web Activity).
-        manifestPlaceholders = [startUrl: "https://greenbackterminal.com/?gbapp=android&gbv=" + appVersion]
+        // The app's screens come from the website (greenbackterminal.com/m), so every website update reaches the app at once.
+        buildConfigField 'String', 'START_URL', '"https://greenbackterminal.com/m"'
     }
 
     signingConfigs {
@@ -45,6 +45,5 @@ android {
     lint { abortOnError false; checkReleaseBuilds false }
 }
 
-dependencies {
-    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
-}
+// No libraries: the app uses only Android's own components, which keeps it small and fast.
+dependencies { }

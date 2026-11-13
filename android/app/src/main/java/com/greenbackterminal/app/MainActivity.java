@@ -688,7 +688,7 @@ public class MainActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER_HORIZONTAL);
         ImageView logo = new ImageView(this);
-        logo.setImageResource(R.mipmap.ic_launcher);
+        logo.setImageResource(R.drawable.gb_logo);
         col.addView(logo, new LinearLayout.LayoutParams(dp(96), dp(96)));
         TextView name = new TextView(this);
         name.setText("Greenback Terminal");

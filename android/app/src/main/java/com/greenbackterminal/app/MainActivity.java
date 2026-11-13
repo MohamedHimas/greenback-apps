@@ -322,7 +322,9 @@ public class MainActivity extends Activity {
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
             if (!req.isForMainFrame()) return false;
-            return route(req.getUrl());
+            boolean out = route(req.getUrl());
+            if (out || req.isRedirect()) note((req.isRedirect() ? "redirect " : "link ") + req.getUrl() + (out ? " → outside" : ""));
+            return out;
         }
 
         @Override
@@ -362,9 +364,30 @@ public class MainActivity extends Activity {
             return true;
         }
 
+        /**
+         * Older Android versions don't download a missing "intermediate" certificate the way Chrome does,
+         * and may lack newer root authorities. For our own site only, rebuild the chain (fetching the
+         * missing parts from the address in the certificate) and check it properly; anything else is refused.
+         */
         @Override
         public void onReceivedSslError(WebView view, android.webkit.SslErrorHandler handler, android.net.http.SslError error) {
-            handler.cancel(); // never load a page with a broken certificate
+            String host = Uri.parse(error.getUrl()).getHost();
+            note("ssl " + error.getPrimaryError() + " " + host + " by " + safeIssuer(error));
+            boolean ours = host != null && (host.equals(SITE) || host.endsWith("." + SITE));
+            boolean onlyUntrusted = !error.hasError(android.net.http.SslError.SSL_EXPIRED)
+                    && !error.hasError(android.net.http.SslError.SSL_IDMISMATCH)
+                    && !error.hasError(android.net.http.SslError.SSL_NOTYETVALID)
+                    && !error.hasError(android.net.http.SslError.SSL_DATE_INVALID);
+            if (!ours || !onlyUntrusted) { handler.cancel(); return; }
+            new Thread(() -> {
+                String why;
+                try { why = Tls.verify(error.getCertificate(), host); } catch (Throwable t) { why = "check failed: " + t; }
+                final String reason = why;
+                ui.post(() -> {
+                    if (reason == null) { note("ssl chain completed and verified"); handler.proceed(); }
+                    else { note("ssl refused: " + reason); handler.cancel(); }
+                });
+            }).start();
         }
     }
 
@@ -451,6 +474,7 @@ public class MainActivity extends Activity {
     private class Downloads implements DownloadListener {
         @Override
         public void onDownloadStart(String url, String ua, String disposition, String mime, long length) {
+            note("download " + url + " · " + mime);
             if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
             try {
                 String name = URLUtil.guessFileName(url, disposition, mime);
@@ -616,6 +640,10 @@ public class MainActivity extends Activity {
         if (loader == null || loader.getVisibility() != View.VISIBLE) { firstLoadDone = true; return; }
         firstLoadDone = true;
         loader.animate().alpha(0f).setDuration(220).withEndAction(() -> loader.setVisibility(View.GONE)).start();
+    }
+
+    private static String safeIssuer(android.net.http.SslError e) {
+        try { return e.getCertificate().getIssuedBy().getDName(); } catch (Exception x) { return "?"; }
     }
 
     private void watchdog() {

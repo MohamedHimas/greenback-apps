@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Older phones (e.g. Android 12) miss some newer certificate authorities that Chrome already knows.
+     Trust the phone's own list plus an up-to-date Mozilla list, so the site's HTTPS certificate is accepted. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/trusted_roots" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

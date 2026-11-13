@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ splash: the icon sits inside a 240dp circle; keep the logo in its middle third -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:gravity="center" android:width="104dp" android:height="104dp" android:drawable="@mipmap/ic_launcher" />
+</layer-list>

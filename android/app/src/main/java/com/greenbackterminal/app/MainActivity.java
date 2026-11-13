@@ -30,7 +30,12 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsetsController;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
+import android.webkit.RenderProcessGoneDetail;
+import android.webkit.WebResourceResponse;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
 import android.webkit.URLUtil;
@@ -81,6 +86,20 @@ public class MainActivity extends Activity {
     private long lastBack = 0;
     private int themeBg = BG_DARK;
     private boolean themeDark = true;
+    private boolean pageReady = false;
+    private LinearLayout diag;
+    private TextView diagText;
+    private final java.util.ArrayList<String> log = new java.util.ArrayList<>();
+    private final long t0 = System.currentTimeMillis();
+    private int lastProgress = 0;
+
+    /** small start-up log, shown on screen if the app gets stuck (so a screenshot tells us why) */
+    private void note(String m) {
+        synchronized (log) {
+            log.add(((System.currentTimeMillis() - t0) / 100) / 10.0 + "s " + m);
+            while (log.size() > 40) log.remove(0);
+        }
+    }
 
     /* ------------------------------------------------------------------ lifecycle */
 
@@ -119,6 +138,10 @@ public class MainActivity extends Activity {
         offline.setVisibility(View.GONE);
         root.addView(offline, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        diag = buildDiag();
+        diag.setVisibility(View.GONE);
+        root.addView(diag, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         setContentView(root);
 
         WebSettings s = web.getSettings();
@@ -136,7 +159,6 @@ public class MainActivity extends Activity {
         s.setAllowContentAccess(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        s.setOffscreenPreRaster(true);
         s.setSupportMultipleWindows(false);
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setUserAgentString(s.getUserAgentString() + " GreenbackApp/android/" + BuildConfig.VERSION_NAME);
@@ -156,8 +178,12 @@ public class MainActivity extends Activity {
             String deep = deepLink(getIntent());
             web.loadUrl(deep != null ? deep : BuildConfig.START_URL);
         }
+        note("start " + BuildConfig.VERSION_NAME + " · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ") · " + Build.MANUFACTURER + " " + Build.MODEL);
+        try { if (Build.VERSION.SDK_INT >= 26 && WebView.getCurrentWebViewPackage() != null) note("webview " + WebView.getCurrentWebViewPackage().packageName + " " + WebView.getCurrentWebViewPackage().versionName); } catch (Exception ignored) { }
         // never leave the splash up for long, even on a very slow connection
         ui.postDelayed(this::hideLoader, 9000);
+        // still nothing on screen after 12 s: show what happened, with Retry / Open in browser
+        ui.postDelayed(this::watchdog, 12000);
     }
 
     @Override
@@ -172,7 +198,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         web.onResume();
-        web.resumeTimers();
+        web.resumeTimers(); // also undoes any pause left over from an earlier version
         js("window.GBApp&&GBApp.onResume&&GBApp.onResume()");
     }
 
@@ -181,7 +207,6 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().flush();
         js("window.GBApp&&GBApp.onPause&&GBApp.onPause()");
         web.onPause();
-        web.pauseTimers();
         super.onPause();
     }
 
@@ -302,12 +327,15 @@ public class MainActivity extends Activity {
 
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+            note("load " + url);
             offline.setVisibility(View.GONE);
             if (firstLoadDone) { bar.setProgress(5); bar.setVisibility(View.VISIBLE); }
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
+            note("loaded " + url + " · \"" + view.getTitle() + "\"");
+            if (url != null && !"/m".equals(Uri.parse(url).getPath()) && !"/m.html".equals(Uri.parse(url).getPath())) pageReady = true;
             bar.setVisibility(View.GONE);
             CookieManager.getInstance().flush();
             // the app screens call GBNative.ready() when drawn; other pages are ready when loaded
@@ -316,7 +344,22 @@ public class MainActivity extends Activity {
 
         @Override
         public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
+            note("error " + err.getErrorCode() + " " + err.getDescription() + (req.isForMainFrame() ? " (page)" : " " + req.getUrl()));
             if (req.isForMainFrame()) showOffline();
+        }
+
+        @Override
+        public void onReceivedHttpError(WebView view, WebResourceRequest req, WebResourceResponse res) {
+            note("http " + res.getStatusCode() + " " + req.getUrl());
+        }
+
+        @SuppressLint("NewApi")
+        /** The page's rendering engine stopped (out of memory, crash): start it again instead of showing nothing. */
+        @Override
+        public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+            note("renderer gone (crash=" + detail.didCrash() + ")");
+            ui.post(MainActivity.this::recreate);
+            return true;
         }
 
         @Override
@@ -327,7 +370,14 @@ public class MainActivity extends Activity {
 
     private class Chrome extends WebChromeClient {
         @Override
+        public boolean onConsoleMessage(ConsoleMessage m) {
+            if (m.messageLevel() == ConsoleMessage.MessageLevel.ERROR) note("js " + m.message() + " @" + String.valueOf(m.sourceId()).replaceAll(".*/", "") + ":" + m.lineNumber());
+            return false;
+        }
+
+        @Override
         public void onProgressChanged(WebView view, int p) {
+            lastProgress = p;
             if (bar.getVisibility() == View.VISIBLE) bar.setProgress(Math.max(5, p));
         }
 
@@ -435,7 +485,11 @@ public class MainActivity extends Activity {
 
         /** The app screens have drawn: take the splash away. */
         @JavascriptInterface
-        public void ready() { ui.post(MainActivity.this::hideLoader); }
+        public void ready() {
+            pageReady = true;
+            note("screens ready");
+            ui.post(() -> { diag.setVisibility(View.GONE); hideLoader(); });
+        }
 
         @JavascriptInterface
         public void haptic(final String kind) {
@@ -564,6 +618,16 @@ public class MainActivity extends Activity {
         loader.animate().alpha(0f).setDuration(220).withEndAction(() -> loader.setVisibility(View.GONE)).start();
     }
 
+    private void watchdog() {
+        if (pageReady || offline.getVisibility() == View.VISIBLE || customView != null) return;
+        note("watchdog: progress " + lastProgress + "% · url " + web.getUrl() + " · title \"" + web.getTitle() + "\"");
+        StringBuilder b = new StringBuilder();
+        synchronized (log) { for (String l : log) b.append(l).append('\n'); }
+        diagText.setText(b.toString());
+        hideLoader();
+        diag.setVisibility(View.VISIBLE);
+    }
+
     private void showOffline() {
         hideLoader();
         bar.setVisibility(View.GONE);
@@ -616,6 +680,66 @@ public class MainActivity extends Activity {
         cp.gravity = Gravity.CENTER;
         f.addView(col, cp);
         return f;
+    }
+
+    /** Shown only if the app's screens don't appear: what happened, plus Retry / Open in browser / Copy. */
+    private LinearLayout buildDiag() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setBackgroundColor(BG_DARK);
+        col.setPadding(dp(22), dp(40), dp(22), dp(22));
+        col.setClickable(true);
+        TextView t = new TextView(this);
+        t.setText("The app is taking too long to open");
+        t.setTextColor(0xFFE6E9EF);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        col.addView(t);
+        TextView m = new TextView(this);
+        m.setText("Tap Retry. If it keeps happening, take a screenshot of this screen and send it to the Greenback team.");
+        m.setTextColor(0xFF8A93A6);
+        m.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        m.setPadding(0, dp(8), 0, dp(14));
+        col.addView(m);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        String[] labels = {"Retry", "Open in browser", "Copy details"};
+        for (int i = 0; i < labels.length; i++) {
+            Button b = new Button(this);
+            b.setText(labels[i]);
+            b.setAllCaps(false);
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            b.setTextColor(i == 0 ? 0xFF04110A : 0xFFE6E9EF);
+            GradientDrawable g = new GradientDrawable();
+            g.setColor(i == 0 ? 0xFF22C55E : 0xFF1F2633);
+            g.setCornerRadius(dp(10));
+            b.setBackground(g);
+            b.setStateListAnimator(null);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f);
+            if (i > 0) lp.leftMargin = dp(8);
+            row.addView(b, lp);
+            final int which = i;
+            b.setOnClickListener(v -> {
+                if (which == 0) { diag.setVisibility(View.GONE); pageReady = false; web.loadUrl(BuildConfig.START_URL); ui.postDelayed(this::watchdog, 15000); }
+                else if (which == 1) openExternal(BuildConfig.START_URL);
+                else {
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("Greenback app details", diagText.getText()));
+                    Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+        col.addView(row);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        diagText = new TextView(this);
+        diagText.setTextColor(0xFF9AA4B2);
+        diagText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        diagText.setTypeface(Typeface.MONOSPACE);
+        diagText.setTextIsSelectable(true);
+        diagText.setPadding(0, dp(16), 0, 0);
+        sv.addView(diagText);
+        col.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        return col;
     }
 
     /** "You're offline" screen with a retry button (native, so it works without any connection). */

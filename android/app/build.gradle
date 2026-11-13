@@ -1,6 +1,6 @@
 plugins { id 'com.android.application' }
 
-def appVersion = System.getenv('VERSION_NAME') ?: '2.0.0'
+def appVersion = System.getenv('VERSION_NAME') ?: '2.0.1'
 
 android {
     namespace 'com.greenbackterminal.app'

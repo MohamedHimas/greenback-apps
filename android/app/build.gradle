@@ -1,6 +1,6 @@
 plugins { id 'com.android.application' }
 
-def appVersion = System.getenv('VERSION_NAME') ?: '2.0.1'
+def appVersion = System.getenv('VERSION_NAME') ?: '2.1.0'
 
 android {
     namespace 'com.greenbackterminal.app'
@@ -45,5 +45,7 @@ android {
     lint { abortOnError false; checkReleaseBuilds false }
 }
 
-// No libraries: the app uses only Android's own components, which keeps it small and fast.
-dependencies { }
+// One library: Firebase Cloud Messaging for phone notifications. Everything else uses Android's own components.
+dependencies {
+    implementation 'com.google.firebase:firebase-messaging:24.1.0'
+}

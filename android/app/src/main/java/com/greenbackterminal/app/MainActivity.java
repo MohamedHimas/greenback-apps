@@ -32,6 +32,9 @@ import android.view.Window;
 import android.view.WindowInsetsController;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.webkit.PermissionRequest;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.RenderProcessGoneDetail;
@@ -71,6 +74,10 @@ public class MainActivity extends Activity {
     private static final String SITE = "greenbackterminal.com";
     private static final String BASE = "https://" + SITE;
     private static final int REQ_FILE = 41;
+    private static final int REQ_PUSH = 42;
+    private static final int REQ_MEDIA = 43;
+    private static volatile MainActivity instance;
+    private PermissionRequest pendingMedia;
     private static final int BG_DARK = 0xFF0B0E14;
 
     private FrameLayout root;
@@ -180,6 +187,9 @@ public class MainActivity extends Activity {
         }
         note("start " + BuildConfig.VERSION_NAME + " · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ") · " + Build.MANUFACTURER + " " + Build.MODEL);
         try { if (Build.VERSION.SDK_INT >= 26 && WebView.getCurrentWebViewPackage() != null) note("webview " + WebView.getCurrentWebViewPackage().packageName + " " + WebView.getCurrentWebViewPackage().versionName); } catch (Exception ignored) { }
+        // phone notifications: fetch the Firebase settings from the website and get this phone's token
+        instance = this;
+        ui.postDelayed(() -> Push.refresh(getApplicationContext(), MainActivity::tokenChanged), 3000);
         // never leave the splash up for long, even on a very slow connection
         ui.postDelayed(this::hideLoader, 9000);
         // still nothing on screen after 12 s: show what happened, with Retry / Open in browser
@@ -197,6 +207,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        GbMessaging.visible = true;
         web.onResume();
         web.resumeTimers(); // also undoes any pause left over from an earlier version
         js("window.GBApp&&GBApp.onResume&&GBApp.onResume()");
@@ -204,6 +215,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        GbMessaging.visible = false;
         CookieManager.getInstance().flush();
         js("window.GBApp&&GBApp.onPause&&GBApp.onPause()");
         web.onPause();
@@ -216,8 +228,38 @@ public class MainActivity extends Activity {
         web.saveState(out);
     }
 
+    /** Firebase gave this phone a (new) token: tell the website so it can register it. */
+    static void tokenChanged() {
+        MainActivity a = instance;
+        if (a != null) a.ui.post(() -> a.js("window.GBPushToken&&GBPushToken()"));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(req, perms, res);
+        if (req == REQ_PUSH) {
+            boolean ok = res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED;
+            if (ok) Push.refresh(getApplicationContext(), MainActivity::tokenChanged);
+            else Toast.makeText(this, "Notifications are off. You can turn them on in Android Settings → Apps → Greenback Terminal.", Toast.LENGTH_LONG).show();
+        } else if (req == REQ_MEDIA && pendingMedia != null) {
+            grantMedia(pendingMedia);
+            pendingMedia = null;
+        }
+    }
+
+    /** Camera / microphone for live streams: allow what Android has allowed, refuse the rest. */
+    private void grantMedia(PermissionRequest r) {
+        java.util.ArrayList<String> ok = new java.util.ArrayList<>();
+        for (String res : r.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res) && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) ok.add(res);
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res) && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) ok.add(res);
+        }
+        if (ok.isEmpty()) r.deny(); else r.grant(ok.toArray(new String[0]));
+    }
+
     @Override
     protected void onDestroy() {
+        if (instance == this) instance = null;
         if (web != null) {
             root.removeView(web);
             web.destroy();
@@ -243,7 +285,15 @@ public class MainActivity extends Activity {
 
     /** greenbackterminal://login?t=… (after Google / Facebook sign-in in the browser) or a website link. */
     private String deepLink(Intent intent) {
-        if (intent == null || intent.getData() == null) return null;
+        if (intent == null) return null;
+        // a tapped notification: open the page it points to
+        String link = intent.getStringExtra("link");
+        if (link != null && !link.isEmpty()) {
+            Uri l = Uri.parse(link.startsWith("/") ? BASE + link : link);
+            intent.removeExtra("link");
+            if (isOurs(l)) return l.toString();
+        }
+        if (intent.getData() == null) return null;
         Uri u = intent.getData();
         if ("greenbackterminal".equals(u.getScheme())) {
             Uri.Builder b = Uri.parse(BASE + "/api/auth.php").buildUpon().appendQueryParameter("action", "app_login");
@@ -396,6 +446,22 @@ public class MainActivity extends Activity {
         public boolean onConsoleMessage(ConsoleMessage m) {
             if (m.messageLevel() == ConsoleMessage.MessageLevel.ERROR) note("js " + m.message() + " @" + String.valueOf(m.sourceId()).replaceAll(".*/", "") + ":" + m.lineNumber());
             return false;
+        }
+
+        @Override
+        public void onPermissionRequest(final PermissionRequest r) {
+            ui.post(() -> {
+                Uri o = r.getOrigin();
+                if (o == null || !isOurs(o)) { r.deny(); return; }
+                java.util.ArrayList<String> need = new java.util.ArrayList<>();
+                for (String res : r.getResources()) {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res) && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.CAMERA);
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res) && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO);
+                }
+                if (need.isEmpty()) { grantMedia(r); return; }
+                pendingMedia = r;
+                requestPermissions(need.toArray(new String[0]), REQ_MEDIA);
+            });
         }
 
         @Override
@@ -601,6 +667,36 @@ public class MainActivity extends Activity {
                 ui.post(() -> Toast.makeText(MainActivity.this, "Could not save the file", Toast.LENGTH_SHORT).show());
                 return "error";
             }
+        }
+
+        /** This phone's notification token ("" until Firebase is ready). */
+        @JavascriptInterface
+        public String pushToken() { return Push.token(getApplicationContext()); }
+
+        /** 'granted' | 'default' (not asked yet) | 'denied' */
+        @JavascriptInterface
+        public String pushState() {
+            if (Build.VERSION.SDK_INT >= 33) {
+                if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return "granted";
+                return Push.prefs(getApplicationContext()).getBoolean("asked", false) && !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) ? "denied" : "default";
+            }
+            android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            return nm == null || nm.areNotificationsEnabled() ? "granted" : "denied";
+        }
+
+        /** Ask Android for permission to show notifications, then get the token (window.GBPushToken() is called when ready). */
+        @JavascriptInterface
+        public void requestPush() {
+            ui.post(() -> {
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    if ("denied".equals(pushState())) {
+                        try { startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName())); } catch (Exception ignored) { }
+                        return;
+                    }
+                    Push.prefs(getApplicationContext()).edit().putBoolean("asked", true).apply();
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_PUSH);
+                } else Push.refresh(getApplicationContext(), MainActivity::tokenChanged);
+            });
         }
 
         @JavascriptInterface

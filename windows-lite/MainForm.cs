@@ -41,6 +41,13 @@ namespace GreenbackTerminal
     {
         readonly WebView2 web = new WebView2();
         readonly string startLink;
+        readonly NotifyIcon tray = new NotifyIcon();
+        readonly Timer pulse = new Timer { Interval = 6000 };
+        bool quitting, startHidden, toldTray;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct FLASHWINFO { public uint cbSize; public IntPtr hwnd; public uint dwFlags; public uint uCount; public uint dwTimeout; }
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 
         const string OfflineHtml = @"<!doctype html><html><head><meta charset='utf-8'><style>
 html,body{margin:0;height:100%;background:#0b0e14;color:#e6e9ef;font-family:Segoe UI,system-ui,sans-serif}
@@ -51,9 +58,10 @@ a{background:#22c55e;color:#04110a;border-radius:10px;padding:12px 26px;font-siz
 <p>Greenback Terminal needs an internet connection. Check your connection and try again.</p>
 <a href='https://greenbackterminal.com/'>Try again</a></div></body></html>";
 
-        public MainForm(string link)
+        public MainForm(string link, bool hidden = false)
         {
             startLink = link;
+            startHidden = hidden;
             Text = Program.AppName;
             BackColor = ColorTranslator.FromHtml("#0b0e14");
             StartPosition = FormStartPosition.CenterScreen;
@@ -70,6 +78,50 @@ a{background:#22c55e;color:#04110a;border-radius:10px;padding:12px 26px;font-siz
             web.DefaultBackgroundColor = ColorTranslator.FromHtml("#0b0e14");
             Controls.Add(web);
             Load += async (s, e) => await Init();
+
+            // tray icon: closing the window keeps Greenback running here, so calls still ring
+            tray.Icon = Icon ?? SystemIcons.Application;
+            tray.Text = Program.AppName;
+            tray.Visible = true;
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Open Greenback Terminal", null, (s, e) => ShowApp());
+            var auto = new ToolStripMenuItem("Start with Windows (calls can ring)") { Checked = Program.StartsWithWindows, CheckOnClick = true };
+            auto.CheckedChanged += (s, e) => Program.StartsWithWindows = auto.Checked;
+            menu.Items.Add(auto);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("Quit (calls won't ring)", null, (s, e) => { quitting = true; Close(); });
+            tray.ContextMenuStrip = menu;
+            tray.DoubleClick += (s, e) => ShowApp();
+            tray.BalloonTipClicked += (s, e) => ShowApp();
+            FormClosing += (s, e) =>
+            {
+                if (quitting || e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing) { tray.Visible = false; return; }
+                e.Cancel = true;
+                Hide();
+                if (!toldTray) { toldTray = true; tray.ShowBalloonTip(6000, "Greenback is still running", "Calls will still ring. Right-click this icon to quit.", ToolTipIcon.Info); }
+            };
+            // while hidden in the tray, check for calls every few seconds
+            pulse.Tick += (s, e) => { if (!Visible && web.CoreWebView2 != null) try { web.CoreWebView2.ExecuteScriptAsync("window.GB&&GB.pulseNow&&GB.pulseNow()"); } catch { } };
+            pulse.Start();
+            if (startHidden) { WindowState = FormWindowState.Minimized; Shown += (s, e) => { Hide(); toldTray = true; }; }
+        }
+
+        void ShowApp()
+        {
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+        }
+
+        /// A call is ringing (the page tells us): bring the window up and flash it.
+        void Ring(string from)
+        {
+            ShowApp();
+            TopMost = true; TopMost = false;
+            var f = new FLASHWINFO { hwnd = Handle, dwFlags = 3 | 12, uCount = 0, dwTimeout = 0 }; // all + until focused
+            f.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(f);
+            try { FlashWindowEx(ref f); } catch { }
+            tray.ShowBalloonTip(8000, "📞 Incoming call", (string.IsNullOrEmpty(from) ? "A member" : from) + " is calling you on Greenback", ToolTipIcon.Info);
         }
 
         async System.Threading.Tasks.Task Init()
@@ -77,7 +129,9 @@ a{background:#22c55e;color:#04110a;border-radius:10px;padding:12px 26px;font-siz
             try
             {
                 Directory.CreateDirectory(Program.DataDir);
-                var env = await CoreWebView2Environment.CreateAsync(null, Program.DataDir);
+                // keep the page fully awake in the tray (calls), and let the ringtone play without a click first
+                var opts = new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows");
+                var env = await CoreWebView2Environment.CreateAsync(null, Program.DataDir, opts);
                 await web.EnsureCoreWebView2Async(env);
             }
             catch (Exception ex)
@@ -125,8 +179,20 @@ a{background:#22c55e;color:#04110a;border-radius:10px;padding:12px 26px;font-siz
             };
             core.PermissionRequested += (s, e) =>
             {
+                // the microphone is asked by the website (calls, voice messages); Windows' own privacy switch still applies
                 e.State = e.PermissionKind == CoreWebView2PermissionKind.Notifications || e.PermissionKind == CoreWebView2PermissionKind.ClipboardRead
+                    || e.PermissionKind == CoreWebView2PermissionKind.Microphone || e.PermissionKind == CoreWebView2PermissionKind.Camera
                     ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+            };
+            // messages from the website: {"gb":"call","from":"name"} when someone rings
+            core.WebMessageReceived += (s, e) =>
+            {
+                try
+                {
+                    var m = e.TryGetWebMessageAsString() ?? "";
+                    if (m.StartsWith("call:")) Ring(m.Substring(5));
+                }
+                catch { }
             };
 
             string first = startLink != null ? Program.DeepLinkToUrl(startLink) : null;
@@ -136,6 +202,8 @@ a{background:#22c55e;color:#04110a;border-radius:10px;padding:12px 26px;font-siz
         /// Called when the app is started again (for example by the sign-in link from the browser).
         public void HandleExternal(string msg)
         {
+            if (msg == "tray") return; // started again by Windows sign-in while already running
+            if (!Visible) Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
             if (msg != null && msg.StartsWith(Program.Scheme + ":", StringComparison.OrdinalIgnoreCase) && web.CoreWebView2 != null)

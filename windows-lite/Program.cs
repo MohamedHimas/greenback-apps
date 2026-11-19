@@ -58,12 +58,31 @@ namespace GreenbackTerminal
             }
 
             string link = args.FirstOrDefault(a => a.StartsWith(Scheme + ":", StringComparison.OrdinalIgnoreCase));
-            RunApp(link);
+            RunApp(link, args.Contains("--tray"));
+        }
+
+        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        /// Start with Windows (quietly, in the tray) so calls can ring even before the app is opened.
+        public static bool StartsWithWindows
+        {
+            get { try { using (var k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue("GreenbackTerminal") != null; } catch { return false; } }
+            set
+            {
+                try
+                {
+                    using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
+                    {
+                        if (value) k.SetValue("GreenbackTerminal", "\"" + InstalledExe + "\" --tray");
+                        else k.DeleteValue("GreenbackTerminal", false);
+                    }
+                }
+                catch { }
+            }
         }
 
         // Kept separate so the WebView2 files are only loaded once the app runs from its install folder.
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        static void RunApp(string link)
+        static void RunApp(string link, bool tray)
         {
             // Only one window: a second start (e.g. the sign-in link) is handed to the first one.
             bool first;
@@ -76,14 +95,14 @@ namespace GreenbackTerminal
                         using (var c = new NamedPipeClientStream(".", PipeName, PipeDirection.Out))
                         {
                             c.Connect(3000);
-                            using (var w = new StreamWriter(c)) w.Write(link ?? "focus");
+                            using (var w = new StreamWriter(c)) w.Write(link ?? (tray ? "tray" : "focus"));
                         }
                     }
                     catch { }
                     return;
                 }
                 if (!Browser.RuntimeAvailable()) return;
-                var form = new MainForm(link);
+                var form = new MainForm(link, tray);
                 var listener = new Thread(() => ListenForLinks(form)) { IsBackground = true };
                 listener.Start();
                 Application.Run(form);
@@ -173,6 +192,9 @@ namespace GreenbackTerminal
 
                 MakeShortcut(StartMenuLnk);
                 MakeShortcut(DesktopLnk);
+                // first install: start with Windows in the tray, so calls ring like on a phone (can be turned off in the tray menu)
+                using (var k = Registry.CurrentUser.CreateSubKey(UninstallKey))
+                    if (k.GetValue("AutoStartSet") == null) { Program.StartsWithWindows = true; k.SetValue("AutoStartSet", 1, RegistryValueKind.DWord); }
 
                 using (var k = Registry.CurrentUser.CreateSubKey(UninstallKey))
                 {
@@ -223,6 +245,9 @@ namespace GreenbackTerminal
         public static void Uninstall()
         {
             if (MessageBox.Show("Remove Greenback Terminal from this computer?", Program.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            Program.StartsWithWindows = false;
+            foreach (var p in Process.GetProcessesByName("GreenbackTerminal"))
+                try { if (p.Id != Process.GetCurrentProcess().Id) p.Kill(); } catch { }
             try { File.Delete(StartMenuLnk); } catch { }
             try { File.Delete(DesktopLnk); } catch { }
             try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }

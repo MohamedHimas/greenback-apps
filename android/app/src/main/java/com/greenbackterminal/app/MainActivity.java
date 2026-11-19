@@ -228,6 +228,38 @@ public class MainActivity extends Activity {
         web.saveState(out);
     }
 
+    /** A call came in while the app is open: ring inside the app. Returns false when the app can't take it. */
+    static boolean incomingCall(int id) {
+        MainActivity a = instance;
+        if (a == null || !a.pageReady) return false;
+        a.ui.post(() -> a.js("window.GB&&GB.nativeCall&&GB.nativeCall(" + id + ")"));
+        return true;
+    }
+
+    /** The website says a call changed (answered elsewhere, hung up): let the page check now. */
+    static void callChanged(int id) {
+        MainActivity a = instance;
+        if (a != null) a.ui.post(() -> a.js("window.GB&&GB.call&&GB.call.refresh&&GB.call.refresh(" + id + ")"));
+    }
+
+    /** Opened from a ringing call: show over the lock screen and wake the screen (until the app is left). */
+    private void callScreen(String link) {
+        if (link == null || !link.contains("call=")) return;
+        try {
+            Uri u = Uri.parse(link.startsWith("/") ? BASE + link : link);
+            Calls.stop(this, Integer.parseInt(u.getQueryParameter("call")));
+        } catch (Exception ignored) { }
+        if (Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(true); setTurnScreenOn(true); }
+        else getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+    }
+
+    @Override
+    protected void onStop() {
+        if (Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(false); setTurnScreenOn(false); }
+        else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        super.onStop();
+    }
+
     /** Firebase gave this phone a (new) token: tell the website so it can register it. */
     static void tokenChanged() {
         MainActivity a = instance;
@@ -289,6 +321,7 @@ public class MainActivity extends Activity {
         // a tapped notification: open the page it points to
         String link = intent.getStringExtra("link");
         if (link != null && !link.isEmpty()) {
+            callScreen(link);
             Uri l = Uri.parse(link.startsWith("/") ? BASE + link : link);
             intent.removeExtra("link");
             if (isOurs(l)) return l.toString();
@@ -701,6 +734,30 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public boolean online() { return isOnline(); }
+
+        /** The ringtone chosen in Settings → Calls (greenback, classic, bell, digital, chime, pulse, phone, silent). */
+        @JavascriptInterface
+        public void setRingtone(String id) { Calls.setTone(getApplicationContext(), id); }
+
+        @JavascriptInterface
+        public boolean canFullScreenCalls() { return Calls.canFullScreen(getApplicationContext()); }
+
+        /** Android 14+: open the switch that lets calls show full screen over the lock screen (else the notification settings). */
+        @JavascriptInterface
+        public void callSettings() {
+            ui.post(() -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= 34 && !Calls.canFullScreen(getApplicationContext())) {
+                        startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + getPackageName())));
+                        return;
+                    }
+                    Intent i = Build.VERSION.SDK_INT >= 26
+                            ? new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, Calls.channel(getApplicationContext()))
+                            : new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                    startActivity(i.putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
+                } catch (Exception e) { Toast.makeText(MainActivity.this, "Open Android Settings → Apps → Greenback Terminal → Notifications", Toast.LENGTH_LONG).show(); }
+            });
+        }
 
         @JavascriptInterface
         public void clearCache() { ui.post(() -> { web.clearCache(true); web.reload(); }); }

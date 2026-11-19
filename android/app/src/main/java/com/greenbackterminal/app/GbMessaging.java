@@ -27,11 +27,28 @@ public class GbMessaging extends FirebaseMessagingService {
     public void onMessageReceived(RemoteMessage m) {
         // with the app in the background Android shows the notification itself; this runs when the app is open
         Map<String, String> d = m.getData();
+        String type = d.get("type");
+        if ("call".equals(type) || "call_end".equals(type)) { call(d, type); return; }
         String title = d.get("title"), body = d.get("body"), link = d.get("link"), tag = d.get("tag");
         if (title == null && m.getNotification() != null) { title = m.getNotification().getTitle(); body = m.getNotification().getBody(); }
         if (title == null) return;
         if (visible && tag != null && tag.startsWith("chat-")) return;
         show(title, body, link, tag);
+    }
+
+    /** a voice call is ringing (or stopped ringing) */
+    private void call(Map<String, String> d, String type) {
+        int id;
+        try { id = Integer.parseInt(d.get("call")); } catch (Exception e) { return; }
+        if ("call".equals(type)) {
+            if (visible && MainActivity.incomingCall(id)) return; // the app is open: it rings inside the app
+            Calls.ring(this, id, d.get("from"), d.get("key"));
+        } else {
+            Calls.stop(this, id);
+            MainActivity.callChanged(id);
+            String t = d.get("title");
+            if (t != null && !t.isEmpty() && !visible) show(t, d.get("body"), d.get("link"), "call-" + id + "-missed");
+        }
     }
 
     private void show(String title, String body, String link, String tag) {

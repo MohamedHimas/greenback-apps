@@ -4,8 +4,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
+        android:name=".App"
         android:label="Greenback Terminal"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -39,6 +46,12 @@
                 <data android:scheme="https" android:host="www.greenbackterminal.com" />
             </intent-filter>
 
+            <!-- a tapped notification -->
+            <intent-filter>
+                <action android:name="GB_OPEN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
             <!-- Google / Facebook sign-in finishes in the browser and comes back here -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -47,5 +60,12 @@
                 <data android:scheme="greenbackterminal" android:host="login" />
             </intent-filter>
         </activity>
+
+        <service android:name=".GbMessaging" android:exported="false">
+            <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="gb_alerts" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_notify" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/gb_green" />
     </application>
 </manifest>

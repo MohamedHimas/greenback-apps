@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- ringing like a phone call: a "phone call" foreground service, and (when allowed) the call screen over other apps -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
@@ -84,6 +88,12 @@
             android:name=".CallService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- rings for incoming calls with the app closed / the phone locked -->
+        <service
+            android:name=".RingService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
 
         <receiver android:name=".CallReceiver" android:exported="false" />
         <receiver android:name=".Reminders" android:exported="false" />

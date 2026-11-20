@@ -76,6 +76,9 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE = 41;
     private static final int REQ_PUSH = 42;
     private static final int REQ_MEDIA = 43;
+    private static final int REQ_CONTACT = 44;
+    private static final int REQ_MIC = 45;
+    private String inviteText = null;
     private static volatile MainActivity instance;
     private PermissionRequest pendingMedia;
     private static final int BG_DARK = 0xFF0B0E14;
@@ -606,7 +609,33 @@ public class MainActivity extends Activity {
             fileCallback = null;
             return;
         }
+        if (req == REQ_CONTACT) {
+            // invite by text message: the contact the member picked (the picker gives us just that one number)
+            String text = inviteText; inviteText = null;
+            String number = null;
+            if (result == RESULT_OK && data != null && data.getData() != null) {
+                try (android.database.Cursor c = getContentResolver().query(data.getData(), new String[]{android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER}, null, null, null)) {
+                    if (c != null && c.moveToFirst()) number = c.getString(0);
+                } catch (Exception ignored) { }
+            }
+            if (result == RESULT_OK) sendSms(number, text);
+            return;
+        }
         super.onActivityResult(req, result, data);
+    }
+
+    private void sendSms(String number, String text) {
+        try {
+            Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + (number == null ? "" : Uri.encode(number.replaceAll("[^0-9+]", "")))));
+            i.putExtra("sms_body", text == null ? "" : text);
+            startActivity(i);
+        } catch (Exception e) {
+            try {
+                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("sms:" + (number == null ? "" : number)));
+                i.putExtra("sms_body", text == null ? "" : text);
+                startActivity(i);
+            } catch (Exception e2) { Toast.makeText(this, "No messages app found", Toast.LENGTH_SHORT).show(); }
+        }
     }
 
     /** Ordinary downloads (files linked on the website). PDFs the app makes itself come through GBNative.saveFile. */
@@ -781,6 +810,54 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public boolean canFullScreenCalls() { return Calls.canFullScreen(getApplicationContext()); }
+
+        /** false when Android may hold back calls while the phone sleeps (battery optimisation on for this app) */
+        @JavascriptInterface
+        public boolean batteryOk() {
+            if (Build.VERSION.SDK_INT < 23) return true;
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            return pm == null || pm.isIgnoringBatteryOptimizations(getPackageName());
+        }
+
+        /** ask Android to let calls through while the phone sleeps (one "Allow" question) */
+        @JavascriptInterface
+        public void batterySettings() {
+            ui.post(() -> {
+                if (Build.VERSION.SDK_INT < 23) return;
+                try { startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))); }
+                catch (Exception e) {
+                    try { startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+                    catch (Exception e2) { Toast.makeText(MainActivity.this, "Open Android Settings → Apps → Greenback Terminal → Battery → Unrestricted", Toast.LENGTH_LONG).show(); }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean micOk() { return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED; }
+
+        @JavascriptInterface
+        public void askMic() {
+            ui.post(() -> {
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return;
+                if (Push.prefs(getApplicationContext()).getBoolean("mic_asked", false) && !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
+                    try { startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { }
+                    Toast.makeText(MainActivity.this, "Tap Permissions → Microphone → Allow", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Push.prefs(getApplicationContext()).edit().putBoolean("mic_asked", true).apply();
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
+            });
+        }
+
+        /** invite by text message: pick a contact, then the messages app opens with the invite written */
+        @JavascriptInterface
+        public void inviteContact(final String text) {
+            ui.post(() -> {
+                inviteText = text;
+                try { startActivityForResult(new Intent(Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI), REQ_CONTACT); }
+                catch (Exception e) { inviteText = null; sendSms(null, text); }
+            });
+        }
 
         /** Android 14+: open the switch that lets calls show full screen over the lock screen (else the notification settings). */
         @JavascriptInterface

@@ -31,9 +31,25 @@ public class GbMessaging extends FirebaseMessagingService {
         if ("call".equals(type) || "call_end".equals(type)) { call(d, type); return; }
         String title = d.get("title"), body = d.get("body"), link = d.get("link"), tag = d.get("tag");
         if (title == null && m.getNotification() != null) { title = m.getNotification().getTitle(); body = m.getNotification().getBody(); }
+        if ("chat".equals(type)) delivered(d);
         if (title == null) return;
         if (visible && tag != null && tag.startsWith("chat-")) return;
         show(title, body, link, tag);
+    }
+
+    /** tell the sender the message reached this phone (✓✓ delivered) */
+    private void delivered(Map<String, String> d) {
+        final String room = d.get("room"), mid = d.get("mid"), u = d.get("u"), k = d.get("dk");
+        if (room == null || mid == null || u == null || k == null) return;
+        new Thread(() -> {
+            try {
+                java.net.HttpURLConnection h = (java.net.HttpURLConnection) new java.net.URL("https://greenbackterminal.com/api/talk.php?dlv=" + android.net.Uri.encode(room)
+                        + "&id=" + android.net.Uri.encode(mid) + "&u=" + android.net.Uri.encode(u) + "&k=" + android.net.Uri.encode(k)).openConnection();
+                h.setConnectTimeout(8000); h.setReadTimeout(8000);
+                h.setRequestProperty("User-Agent", "GreenbackApp/android/" + BuildConfig.VERSION_NAME);
+                h.getResponseCode(); h.disconnect();
+            } catch (Exception ignored) { }
+        }, "gb-dlv").start();
     }
 
     /** a voice call is ringing (or stopped ringing) */

@@ -200,9 +200,37 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (inPage(intent)) return;
         String deep = deepLink(intent);
         if (deep != null) web.loadUrl(deep);
     }
+
+    /** A call or chat link while the app's screens are already open: hand it to the page (no reload, so a call in progress isn't cut). */
+    private boolean inPage(Intent intent) {
+        String link = intent.getStringExtra("link");
+        String cur = web == null ? null : web.getUrl();
+        String cp = cur == null ? null : Uri.parse(cur).getPath();
+        if (link == null || !pageReady || cp == null || !cp.matches("/m(\\.html)?")) return false;
+        Uri u = Uri.parse(link.startsWith("/") ? BASE + link : link);
+        if (!isOurs(u) || u.getPath() == null || !u.getPath().matches("/m(\\.html)?")) return false;
+        String call = u.getQueryParameter("call"), chat = u.getQueryParameter("chat");
+        if (call != null && call.matches("\\d{1,10}")) {
+            callScreen(link);
+            js("window.GB&&GB.nativeCall&&GB.nativeCall(" + call + "," + ("1".equals(u.getQueryParameter("answer")) ? "true" : "false") + ")");
+        } else if (chat != null && chat.matches("[A-Za-z0-9]{1,24}")) {
+            js("window.GBApp&&GBApp.openChat&&GBApp.openChat('" + chat.toUpperCase() + "')");
+        } else return false;
+        intent.removeExtra("link");
+        return true;
+    }
+
+    /** "Hang up" on the ongoing-call notification. */
+    static void hangUp() {
+        MainActivity a = instance;
+        if (a != null) a.ui.post(() -> a.js("window.GB&&GB.call&&GB.call.end&&GB.call.end()"));
+    }
+
+    private static volatile boolean inCall = false;
 
     @Override
     protected void onResume() {
@@ -218,7 +246,7 @@ public class MainActivity extends Activity {
         GbMessaging.visible = false;
         CookieManager.getInstance().flush();
         js("window.GBApp&&GBApp.onPause&&GBApp.onPause()");
-        web.onPause();
+        if (!inCall) web.onPause(); // during a call the page keeps running (screen off, other apps)
         super.onPause();
     }
 
@@ -758,6 +786,27 @@ public class MainActivity extends Activity {
                 } catch (Exception e) { Toast.makeText(MainActivity.this, "Open Android Settings → Apps → Greenback Terminal → Notifications", Toast.LENGTH_LONG).show(); }
             });
         }
+
+        /** The page's call changed: "calling" / "active" keep the app alive with an ongoing-call notification, "ended" stops it. */
+        @JavascriptInterface
+        public void callState(final String state, final String name) {
+            final boolean on = "calling".equals(state) || "active".equals(state);
+            inCall = on;
+            ui.post(() -> {
+                setVolumeControlStream(on ? android.media.AudioManager.STREAM_VOICE_CALL : android.media.AudioManager.USE_DEFAULT_STREAM_TYPE);
+                if (on) getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            });
+            CallService.update(getApplicationContext(), on ? state : "ended", name);
+        }
+
+        /** Loudspeaker on / off during a call (off = earpiece, or the headset when one is connected). */
+        @JavascriptInterface
+        public void setSpeaker(boolean on) { CallService.setSpeaker(getApplicationContext(), on); }
+
+        /** "Remind me" on an incoming call: a notification in a few minutes to call that person back. */
+        @JavascriptInterface
+        public void remindCall(String name, String room, int minutes) { Reminders.callBack(getApplicationContext(), name, room, minutes); }
 
         @JavascriptInterface
         public void clearCache() { ui.post(() -> { web.clearCache(true); web.reload(); }); }

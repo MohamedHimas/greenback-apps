@@ -80,9 +80,12 @@ final class Calls {
 
     /** Show the ringing call. */
     @SuppressWarnings("deprecation")
-    static void ring(Context c, int call, String from, String key) {
+    static void ring(Context c, int call, String from, String key, String room) {
         String who = from == null || from.isEmpty() ? "A Greenback member" : from;
-        PendingIntent show = open(c, "/m?call=" + call, call * 4);
+        // the native call screen (instant, works over the lock screen)
+        Intent scr = new Intent(c, IncomingCallActivity.class).putExtra("call", call).putExtra("from", who).putExtra("key", key == null ? "" : key).putExtra("room", room == null ? "" : room)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_USER_ACTION);
+        PendingIntent show = PendingIntent.getActivity(c, call * 4 + 3, scr, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
         PendingIntent answer = open(c, "/m?call=" + call + "&answer=1", call * 4 + 1);
         Intent d = new Intent(c, CallReceiver.class).setAction("GB_DECLINE").putExtra("call", call).putExtra("key", key == null ? "" : key);
         PendingIntent decline = PendingIntent.getBroadcast(c, call * 4 + 2, d, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
@@ -109,6 +112,7 @@ final class Calls {
 
     /** Stop ringing (answered, declined, hung up, missed). */
     static void stop(Context c, int call) {
+        IncomingCallActivity.close(call);
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel("call-" + call, ID);
     }

@@ -42,7 +42,7 @@ public class GbMessaging extends FirebaseMessagingService {
         try { id = Integer.parseInt(d.get("call")); } catch (Exception e) { return; }
         if ("call".equals(type)) {
             if (visible && MainActivity.incomingCall(id)) return; // the app is open: it rings inside the app
-            Calls.ring(this, id, d.get("from"), d.get("key"));
+            Calls.ring(this, id, d.get("from"), d.get("key"), d.get("room"));
         } else {
             Calls.stop(this, id);
             MainActivity.callChanged(id);

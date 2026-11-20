@@ -191,12 +191,64 @@ a{background:#22c55e;color:#04110a;border-radius:10px;padding:12px 26px;font-siz
                 {
                     var m = e.TryGetWebMessageAsString() ?? "";
                     if (m.StartsWith("call:")) Ring(m.Substring(5));
+                    else if (m.StartsWith("update:")) StartUpdate(m.Substring(7));
                 }
                 catch { }
             };
 
             string first = startLink != null ? Program.DeepLinkToUrl(startLink) : null;
             core.Navigate(first ?? Program.Home);
+        }
+
+        /* ---------------- one-tap update: download the new version, check it, install it and reopen ---------------- */
+        bool updating;
+        void Tell(string what) { try { web.CoreWebView2?.PostWebMessageAsString("upd:" + what); } catch { } }
+
+        /// msg = "version|sha256" (sha256 may be empty)
+        void StartUpdate(string msg)
+        {
+            if (updating) return;
+            updating = true;
+            var parts = msg.Split('|');
+            string ver = parts[0], sha = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "";
+            string tmp = Path.Combine(Path.GetTempPath(), "GreenbackTerminal-Update-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".exe");
+            var wc = new System.Net.WebClient();
+            wc.Headers.Add("User-Agent", "GreenbackApp/windows/" + Program.Version);
+            wc.DownloadProgressChanged += (s, e) => BeginInvoke((Action)(() => Tell("download:" + e.ProgressPercentage)));
+            wc.DownloadFileCompleted += (s, e) => BeginInvoke((Action)(() =>
+            {
+                try
+                {
+                    if (e.Error != null) throw e.Error;
+                    if (sha.Length == 64)
+                    {
+                        string got;
+                        using (var f = File.OpenRead(tmp)) using (var h = System.Security.Cryptography.SHA256.Create())
+                            got = BitConverter.ToString(h.ComputeHash(f)).Replace("-", "").ToLowerInvariant();
+                        if (got != sha) throw new Exception("the download was damaged — please try again");
+                    }
+                    Tell("install:0");
+                    // the new version installs itself over this one (it closes this window) and opens again
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tmp, "--quiet-update") { UseShellExecute = false });
+                    quitting = true;
+                    tray.Visible = false;
+                    Application.Exit();
+                }
+                catch (Exception ex)
+                {
+                    updating = false;
+                    try { File.Delete(tmp); } catch { }
+                    Tell("error:" + ex.Message);
+                }
+            }));
+            Tell("download:0");
+            try { System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12; } catch { }
+            wc.DownloadFileAsync(new Uri(Program.Home + "downloads/GreenbackTerminal-Setup.bin?v=" + Uri.EscapeDataString(ver)), tmp);
+        }
+
+        public void ShowUpdated()
+        {
+            try { tray.ShowBalloonTip(5000, "Greenback Terminal updated", "You're now on version " + Program.Version + ".", ToolTipIcon.Info); } catch { }
         }
 
         /// Called when the app is started again (for example by the sign-in link from the browser).

@@ -50,15 +50,18 @@ namespace GreenbackTerminal
             if (!installed)
             {
                 // Running the downloaded file: install (or update) and start the installed copy.
+                bool quiet = args.Contains("--quiet-update");
                 if (Installer.Install(self))
                 {
-                    try { Process.Start(new ProcessStartInfo(InstalledExe) { UseShellExecute = true }); } catch { }
+                    try { Process.Start(new ProcessStartInfo(InstalledExe, quiet ? "--updated" : "") { UseShellExecute = true }); } catch { }
                 }
+                // an update downloaded by the app itself: remove the temporary file afterwards
+                if (quiet) try { Process.Start(new ProcessStartInfo("cmd.exe", "/c ping 127.0.0.1 -n 4 >nul & del /f /q \"" + self + "\"") { CreateNoWindow = true, UseShellExecute = false }); } catch { }
                 return;
             }
 
             string link = args.FirstOrDefault(a => a.StartsWith(Scheme + ":", StringComparison.OrdinalIgnoreCase));
-            RunApp(link, args.Contains("--tray"));
+            RunApp(link, args.Contains("--tray"), args.Contains("--updated"));
         }
 
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -82,7 +85,7 @@ namespace GreenbackTerminal
 
         // Kept separate so the WebView2 files are only loaded once the app runs from its install folder.
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        static void RunApp(string link, bool tray)
+        static void RunApp(string link, bool tray, bool updated = false)
         {
             // Only one window: a second start (e.g. the sign-in link) is handed to the first one.
             bool first;
@@ -103,6 +106,7 @@ namespace GreenbackTerminal
                 }
                 if (!Browser.RuntimeAvailable()) return;
                 var form = new MainForm(link, tray);
+                if (updated) form.Shown += (s, e) => form.ShowUpdated();
                 var listener = new Thread(() => ListenForLinks(form)) { IsBackground = true };
                 listener.Start();
                 Application.Run(form);

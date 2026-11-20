@@ -15,4 +15,9 @@
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowAnimationStyle">@android:style/Animation.Activity</item>
     </style>
+
+    <!-- the incoming call screen draws its own background straight away (no splash) -->
+    <style name="CallTheme" parent="AppTheme">
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
 </resources>

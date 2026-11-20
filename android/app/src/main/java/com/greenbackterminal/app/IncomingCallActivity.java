@@ -92,6 +92,7 @@ public class IncomingCallActivity extends Activity {
 
     private void answer() {
         Calls.stop(this, call);
+        if (call == 0) { android.widget.Toast.makeText(this, "✓ It works — your phone rings for Greenback calls, even when locked.", android.widget.Toast.LENGTH_LONG).show(); finish(); return; }
         Intent i = new Intent(this, MainActivity.class).setAction("GB_OPEN").putExtra("link", "/m?call=" + call + "&answer=1")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(i);
@@ -99,6 +100,7 @@ public class IncomingCallActivity extends Activity {
     }
 
     private void decline() {
+        if (call == 0) { Calls.stop(this, 0); finish(); return; }
         sendBroadcast(new Intent(this, CallReceiver.class).setAction("GB_DECLINE").putExtra("call", call).putExtra("key", key == null ? "" : key));
         finish();
     }

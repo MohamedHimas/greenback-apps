@@ -37,6 +37,14 @@ public class GbMessaging extends FirebaseMessagingService {
         show(title, body, link, tag);
     }
 
+    private boolean screenOnUnlocked() {
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+            return (pm == null || pm.isInteractive()) && (km == null || !km.isKeyguardLocked());
+        } catch (Exception e) { return false; }
+    }
+
     /** tell the sender the message reached this phone (✓✓ delivered) */
     private void delivered(Map<String, String> d) {
         final String room = d.get("room"), mid = d.get("mid"), u = d.get("u"), k = d.get("dk");
@@ -57,8 +65,10 @@ public class GbMessaging extends FirebaseMessagingService {
         int id;
         try { id = Integer.parseInt(d.get("call")); } catch (Exception e) { return; }
         if ("call".equals(type)) {
-            if (visible && MainActivity.incomingCall(id)) return; // the app is open: it rings inside the app
-            Calls.ring(this, id, d.get("from"), d.get("key"), d.get("room"));
+            // the app is open, on screen and unlocked: it rings inside the app. Otherwise ring like a phone.
+            if (id > 0 && visible && screenOnUnlocked() && MainActivity.incomingCall(id)) return;
+            String who = d.get("caller"); if (who == null) who = d.get("x_from"); if (who == null) who = d.get("from");
+            Calls.ring(this, id, who, d.get("key"), d.get("room"));
         } else {
             Calls.stop(this, id);
             MainActivity.callChanged(id);

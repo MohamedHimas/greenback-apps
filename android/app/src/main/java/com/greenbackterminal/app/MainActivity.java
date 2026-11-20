@@ -624,6 +624,10 @@ public class MainActivity extends Activity {
         super.onActivityResult(req, result, data);
     }
 
+    void openAppDetails() {
+        try { startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { }
+    }
+
     private void sendSms(String number, String text) {
         try {
             Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + (number == null ? "" : Uri.encode(number.replaceAll("[^0-9+]", "")))));
@@ -828,6 +832,72 @@ public class MainActivity extends Activity {
                 catch (Exception e) {
                     try { startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
                     catch (Exception e2) { Toast.makeText(MainActivity.this, "Open Android Settings → Apps → Greenback Terminal → Battery → Unrestricted", Toast.LENGTH_LONG).show(); }
+                }
+            });
+        }
+
+        /** "display over other apps": lets the call screen open by itself on every phone (Xiaomi, Oppo, Vivo… need it) */
+        @JavascriptInterface
+        public boolean overlayOk() { return Build.VERSION.SDK_INT < 23 || android.provider.Settings.canDrawOverlays(MainActivity.this); }
+
+        @JavascriptInterface
+        public void overlaySettings() {
+            ui.post(() -> {
+                try { startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()))); }
+                catch (Exception e) { openAppDetails(); }
+            });
+        }
+
+        /** the phone's maker (some add their own "auto-start" / "lock screen" switches) */
+        @JavascriptInterface
+        public String brand() { return (Build.MANUFACTURER == null ? "" : Build.MANUFACTURER).toLowerCase(java.util.Locale.ROOT); }
+
+        /** open the maker's "auto-start / background" page for this app (Xiaomi, Oppo, Realme, Vivo, Huawei, Honor, OnePlus, Asus, Samsung) */
+        @JavascriptInterface
+        public boolean autostartSettings() {
+            final String b = brand();
+            final String[][] pages = {
+                {"xiaomi", "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"},
+                {"redmi", "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"},
+                {"poco", "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"},
+                {"oppo", "com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"},
+                {"oppo", "com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"},
+                {"oppo", "com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"},
+                {"realme", "com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"},
+                {"oneplus", "com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"},
+                {"vivo", "com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"},
+                {"vivo", "com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager"},
+                {"huawei", "com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"},
+                {"huawei", "com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity"},
+                {"honor", "com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"},
+                {"asus", "com.asus.mobilemanager", "com.asus.mobilemanager.MainActivity"},
+                {"samsung", "com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity"},
+                {"samsung", "com.samsung.android.lool", "com.samsung.android.sm.ui.battery.BatteryActivity"},
+            };
+            for (String[] p : pages) {
+                if (!b.contains(p[0])) continue;
+                try {
+                    Intent i = new Intent().setComponent(new android.content.ComponentName(p[1], p[2])).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    if (getPackageManager().resolveActivity(i, 0) == null) continue;
+                    ui.post(() -> { try { startActivity(i); } catch (Exception e) { openAppDetails(); } });
+                    return true;
+                } catch (Exception ignored) { }
+            }
+            ui.post(MainActivity.this::openAppDetails);
+            return false;
+        }
+
+        /** Xiaomi: the "show on lock screen" and "open new windows while running in the background" switches */
+        @JavascriptInterface
+        public void lockScreenSettings() {
+            ui.post(() -> {
+                try {
+                    Intent i = new Intent("miui.intent.action.APP_PERM_EDITOR").setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+                            .putExtra("extra_pkgname", getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Exception e) {
+                    try { startActivity(new Intent("miui.intent.action.APP_PERM_EDITOR").putExtra("extra_pkgname", getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+                    catch (Exception e2) { openAppDetails(); }
                 }
             });
         }

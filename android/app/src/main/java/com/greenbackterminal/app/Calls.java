@@ -78,43 +78,79 @@ final class Calls {
         return PendingIntent.getActivity(c, req, i, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
     }
 
-    /** Show the ringing call. */
-    @SuppressWarnings("deprecation")
-    static void ring(Context c, int call, String from, String key, String room) {
-        String who = from == null || from.isEmpty() ? "A Greenback member" : from;
-        // the native call screen (instant, works over the lock screen)
-        Intent scr = new Intent(c, IncomingCallActivity.class).putExtra("call", call).putExtra("from", who).putExtra("key", key == null ? "" : key).putExtra("room", room == null ? "" : room)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_USER_ACTION);
-        PendingIntent show = PendingIntent.getActivity(c, call * 4 + 3, scr, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
-        PendingIntent answer = open(c, "/m?call=" + call + "&answer=1", call * 4 + 1);
-        Intent d = new Intent(c, CallReceiver.class).setAction("GB_DECLINE").putExtra("call", call).putExtra("key", key == null ? "" : key);
-        PendingIntent decline = PendingIntent.getBroadcast(c, call * 4 + 2, d, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
+    /** the ringtone the member picked (null = silent) */
+    static Uri soundUri(Context c) { return sound(c, tone(c)); }
 
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, channel(c)) : new Notification.Builder(c);
-        b.setSmallIcon(R.drawable.ic_notify).setColor(0xFF22C55E)
-                .setContentTitle(who).setContentText("📞 Incoming voice call · Greenback")
-                .setCategory(Notification.CATEGORY_CALL).setOngoing(true).setAutoCancel(true)
-                .setContentIntent(show).setFullScreenIntent(show, true)
-                .setVisibility(Notification.VISIBILITY_PUBLIC).setShowWhen(true).setWhen(System.currentTimeMillis())
-                .addAction(new Notification.Action.Builder(null, "✕ Decline", decline).build())
-                .addAction(new Notification.Action.Builder(null, "📞 Answer", answer).build());
-        if (Build.VERSION.SDK_INT >= 26) b.setTimeoutAfter(45000);
-        if (Build.VERSION.SDK_INT < 26) {
-            b.setPriority(Notification.PRIORITY_MAX).setVibrate(VIBRATE);
-            Uri s = sound(c, tone(c));
-            if (s != null) b.setSound(s, attrs());
+    /** silent high-priority channel for the ringing notification while RingService plays the ringtone itself */
+    static String quietChannel(Context c) {
+        String id = "gb_calls_ring";
+        if (Build.VERSION.SDK_INT < 26) return id;
+        NotificationManager nm = c.getSystemService(NotificationManager.class);
+        if (nm != null && nm.getNotificationChannel(id) == null) {
+            NotificationChannel ch = new NotificationChannel(id, "Incoming calls", NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("Shows incoming Greenback calls over the lock screen (the ringtone plays separately)");
+            ch.setSound(null, null);
+            ch.enableVibration(false);
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+            nm.createNotificationChannel(ch);
         }
-        Notification n = b.build();
+        return id;
+    }
+
+    /** Ring: the ringing service (rings, wakes the screen, full-screen call). */
+    static void ring(Context c, int call, String from, String key, String room) {
+        RingService.start(c, call, from, key, room);
+    }
+
+    /** Fallback when the service can't start: the ringing notification alone (rings through its channel). */
+    static void notifyOnly(Context c, int call, String from, String key, String room) {
+        Notification n = build(c, call, from, key, room, false);
         n.flags |= Notification.FLAG_INSISTENT; // keep ringing until answered / declined
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.notify("call-" + call, ID, n);
     }
 
+    /** The incoming-call notification: full screen over the lock screen, Answer / Decline. */
+    @SuppressWarnings("deprecation")
+    static Notification build(Context c, int call, String from, String key, String room, boolean quiet) {
+        String who = from == null || from.isEmpty() ? "A Greenback member" : from;
+        Intent scr = new Intent(c, IncomingCallActivity.class).putExtra("call", call).putExtra("from", who).putExtra("key", key == null ? "" : key).putExtra("room", room == null ? "" : room)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_USER_ACTION);
+        int fl = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+        PendingIntent show = PendingIntent.getActivity(c, call * 4 + 3, scr, fl);
+        PendingIntent answer = call == 0 ? show : open(c, "/m?call=" + call + "&answer=1", call * 4 + 1);
+        Intent d = new Intent(c, CallReceiver.class).setAction("GB_DECLINE").putExtra("call", call).putExtra("key", key == null ? "" : key);
+        PendingIntent decline = PendingIntent.getBroadcast(c, call * 4 + 2, d, fl);
+
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, quiet ? quietChannel(c) : channel(c)) : new Notification.Builder(c);
+        b.setSmallIcon(R.drawable.ic_notify).setColor(0xFF22C55E)
+                .setContentTitle(who).setContentText(call == 0 ? "Test call · your phone rings for Greenback calls" : "Incoming voice call · Greenback")
+                .setCategory(Notification.CATEGORY_CALL).setOngoing(true).setAutoCancel(false)
+                .setContentIntent(show).setFullScreenIntent(show, true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC).setShowWhen(true).setWhen(System.currentTimeMillis());
+        boolean styled = false;
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                android.app.Person p = new android.app.Person.Builder().setName(who).setImportant(true).build();
+                b.setStyle(Notification.CallStyle.forIncomingCall(p, decline, answer));
+                styled = true;
+            } catch (Exception ignored) { }
+        }
+        if (!styled) b.addAction(new Notification.Action.Builder(null, "Decline", decline).build()).addAction(new Notification.Action.Builder(null, "Answer", answer).build());
+        if (Build.VERSION.SDK_INT >= 26) b.setTimeoutAfter(46000);
+        if (Build.VERSION.SDK_INT < 26) {
+            b.setPriority(Notification.PRIORITY_MAX);
+            if (!quiet) { b.setVibrate(VIBRATE); Uri s = sound(c, tone(c)); if (s != null) b.setSound(s, attrs()); }
+        }
+        return b.build();
+    }
+
     /** Stop ringing (answered, declined, hung up, missed). */
     static void stop(Context c, int call) {
+        RingService.stop(c, call);
         IncomingCallActivity.close(call);
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm != null) nm.cancel("call-" + call, ID);
+        if (nm != null) { nm.cancel("call-" + call, ID); }
     }
 
     /** Android 14+: may this app show calls full screen over the lock screen? */

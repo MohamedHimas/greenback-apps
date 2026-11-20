@@ -232,6 +232,17 @@ public class MainActivity extends Activity {
 
     private static volatile boolean inCall = false;
 
+    /** progress of an app update, shown by the page (window.GBUpd) */
+    void tellUpdate(String stage, String value) {
+        String v = value == null ? "" : value.replace("\\", " ").replace("'", "’").replace("\n", " ");
+        ui.post(() -> js("window.GBUpd&&GBUpd('" + stage + "','" + v + "')"));
+    }
+
+    static void tellUpdateStatic(String stage, String value) {
+        MainActivity a = instance;
+        if (a != null) a.tellUpdate(stage, value);
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -239,6 +250,7 @@ public class MainActivity extends Activity {
         web.onResume();
         web.resumeTimers(); // also undoes any pause left over from an earlier version
         js("window.GBApp&&GBApp.onResume&&GBApp.onResume()");
+        Updater.resume(this); // back from "allow updates from this app"
     }
 
     @Override
@@ -799,6 +811,14 @@ public class MainActivity extends Activity {
             });
             CallService.update(getApplicationContext(), on ? state : "ended", name);
         }
+
+        /** One-tap app update (2.4+): download, check and install the new version, then reopen. */
+        @JavascriptInterface
+        public void updateApp(String version, String sha256) { Updater.start(MainActivity.this, version, sha256); }
+
+        /** true when updates can install without the "allow from this source" question (it was allowed before) */
+        @JavascriptInterface
+        public boolean updateAllowed() { return Updater.allowed(getApplicationContext()); }
 
         /** Loudspeaker on / off during a call (off = earpiece, or the headset when one is connected). */
         @JavascriptInterface
